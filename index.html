@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>My Location with 3D Audio</title>
+    <style>
+        html, body, #map {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+        #infoBox, #controlPanel {
+            position: absolute;
+            top: 10px;
+            background-color: rgba(255, 255, 255, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+        }
+        #infoBox {
+            right: 10px;
+        }
+        #controlPanel {
+            left: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="infoBox">Closest Sounds</div>
+    <div id="controlPanel">
+        <input type="text" id="fakeLat" placeholder="Latitude">
+        <input type="text" id="fakeLng" placeholder="Longitude">
+        <button id="setLocation">Set Location</button>
+        <br><br>
+        <label for="volumeControl">Volume:</label>
+        <input type="range" id="volumeControl" min="0" max="1" step="0.01" value="1">
+        <input type="number" id="volumeValue" min="0" max="1" step="0.01" value="1" style="margin-left: 10px;">
+        <br><br>
+        <label for="pannerControl">Stereo Panning:</label>
+        <input type="range" id="pannerControl" min="-1" max="1" step="0.01" value="0">
+        <input type="number" id="pannerValue" min="-1" max="1" step="0.01" value="0" style="margin-left: 10px;">
+        <br><br>
+    </div>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAzW8X7thsWXWcEZ2P6fU2us8_qbFp8YL4&callback=initMap&libraries=geometry" async defer></script>
+    <script>
+        // JavaScript code will be provided in subsequent parts.
+    </script>
+</body>
+</html>
+<script>
+    let map;
+    let marker;
+    let fakeLocation = null;
+    let audioContext = null;
+    let soundObjects = [
+        { lat: 52.5384694, lng: 13.4135674, url: 'https://cdn.freesound.org/previews/638/638266_1648170-hq.mp3', marker: null }
+    ];
+    let audioSources = {};
+
+    document.getElementById('setLocation').addEventListener('click', function() {
+        const lat = parseFloat(document.getElementById('fakeLat').value);
+        const lng = parseFloat(document.getElementById('fakeLng').value);
+        if (!isNaN(lat) && !isNaN(lng)) {
+            fakeLocation = {latitude: lat, longitude: lng};
+            handlePositionUpdate({coords: fakeLocation}, true);
+        }
+    });
+
+    function initMap() {
+        map = new google.maps.Map(document.getElementById('map'), {
+            center: {lat: 52.5384694, lng: 13.4135674},
+            zoom: 15,
+            mapTypeId: google.maps.MapTypeId.SATELLITE
+        });
+        startExperience();
+    }
+</script>
+<script>
+    // Continuation of the script from Part 2
+    function startExperience() {
+        // Ensure audioContext is initialized
+        if (!audioContext) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            // Load sounds only after the audio context has been initialized
+            soundObjects.forEach(loadSound);
+        }
+        // Set interval to update sliders every 2 seconds
+        setInterval(updateSliders, 2000);
+    }
+
+    function adjustVolume(volume) {
+        const soundObject = soundObjects[0];
+        if (audioSources[soundObject.url]) {
+            const gainNode = audioSources[soundObject.url].gainNode;
+            gainNode.gain.setValueAtTime(volume, audioContext.currentTime);
+        }
+    }
+
+    function adjustPanning(panValue) {
+        const soundObject = soundObjects[0];
+        if (audioSources[soundObject.url]) {
+            const pannerNode = audioSources[soundObject.url].pannerNode || audioContext.createStereoPanner();
+            audioSources[soundObject.url].pannerNode = pannerNode;
+            pannerNode.pan.setValueAtTime(panValue, audioContext.currentTime);
+        }
+    }
+
+    function handlePositionUpdate(position, forceUpdate) {
+        const pos = { lat: position.coords.latitude, lng: position.coords.longitude };
+        if (!marker) {
+            marker = new google.maps.Marker({
+                position: pos,
+                map: map,
+                icon: {
+                    path: google.maps.SymbolPath.CIRCLE,
+                    scale: 7,
+                    fillColor: "#4285F4",
+                    fillOpacity: 0.8,
+                    strokeWeight: 0
+                },
+                title: "Your Position"
+            });
+        } else {
+            marker.setPosition(pos);
+        }
+        map.panTo(pos);
+        // Update sound based on position after marker is updated
+        updateSoundBasedOnPosition(pos);
+    }
+
+    function updateSoundBasedOnPosition(userPos) {
+        // Update sliders based on distance from the user to the sound object
+        const soundObject = soundObjects[0];
+        const soundPos = { lat: soundObject.lat, lng: soundObject.lng };
+        const distance = google.maps.geometry.spherical.computeDistanceBetween(new google.maps.LatLng(userPos.lat, userPos.lng), new google.maps.LatLng(soundPos.lat, soundPos.lng));
+        const maxDistance = 100; // 100 meters
+        const minDistance = 1;   // 1 meter
+
+        // Calculate volume and panning based on distance
+        let volume = 1 - (distance - minDistance) / (maxDistance - minDistance);
+        volume = Math.max(0, Math.min(1, volume)); // Ensure volume is within 0 and 1
+        let panning = (userPos.lng - soundPos.lng) / 180; // Assuming 180 degrees for the stereo panning range
+
+        // Update sliders
+        document.getElementById('volumeControl').value = volume;
+        document.getElementById('volumeValue').value = volume.toFixed(2);
+        document.getElementById('pannerControl').value = panning;
+        document.getElementById('pannerValue').value = panning.toFixed(2);
+
+        // Log volume and panning
+        console.log('Volume:', volume.toFixed(2), '| Panning:', panning.toFixed(2));
+
+        // Adjust volume and panning
+        adjustVolume(volume);
+        adjustPanning(panning);
+    }
+
+    function loadSound(object) {
+        fetch(object.url)
+            .then(response => response.arrayBuffer())
+            .then(arrayBuffer => audioContext.decodeAudioData(arrayBuffer))
+            .then(audioBuffer => {
+                const source = audioContext.createBufferSource();
+                source.buffer = audioBuffer;
+                const gainNode = audioContext.createGain();
+                const pannerNode = audioContext.createStereoPanner();
+                source.connect(gainNode).connect(pannerNode).connect(audioContext.destination);
+                source.loop = true;
+                source.start();
+                audioSources[object.url] = { source: source, gainNode: gainNode, pannerNode: pannerNode };
+            }).catch(error => console.error("Error with decoding audio data:", error));
+    }
+
+    function updateSliders() {
+        // Get user's current position
+        if (fakeLocation) {
+            handlePositionUpdate({coords: fakeLocation}, true);
+        } else {
+            navigator.geolocation.getCurrentPosition(position => {
+                handlePositionUpdate(position, true);
+            }, console.error, {
+                enableHighAccuracy: true,
+                timeout: 5000,
+                maximumAge: 0
+            });
+        }
+    }
+
+    window.onload = () => {
+        document.getElementById('startExperience').click(); // Auto-start experience on page load
+    };
+</script>
